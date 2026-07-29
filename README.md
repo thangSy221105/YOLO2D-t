@@ -62,6 +62,8 @@ If that module exists, `train.py` will use it automatically.
 python train.py --config configs/default.yaml
 ```
 
+For Colab, use `notebooks/colab_train_yolo2dt.ipynb`.
+
 ## Expected batch format
 
 Each batch can be either:
