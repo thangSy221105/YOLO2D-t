@@ -64,6 +64,19 @@ python train.py --config configs/default.yaml
 
 For Colab, use `notebooks/colab_train_yolo2dt.ipynb`.
 
+For the YOLOv8-style 2D+t prototype, use:
+
+```bash
+python train_yolov8_2dt.py --config configs/yolov8_2dt.yaml
+python visualize_yolov8_2dt.py --config configs/yolov8_2dt.yaml
+```
+
+Colab notebook:
+
+```text
+notebooks/colab_train_yolov8_2dt.ipynb
+```
+
 ## Expected batch format
 
 Each batch can be either:

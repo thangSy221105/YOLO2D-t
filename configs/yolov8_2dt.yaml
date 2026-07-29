@@ -1,0 +1,40 @@
+seed: 42
+
+data:
+  image_size: 448
+  grid_size: 7
+  boxes_per_cell: 2
+  num_classes: 1
+  batch_size: 8
+  num_workers: 2
+  delta: 40
+  processed_dir: /content/data/processed
+  train_split: train
+  val_split: val
+  use_horizontal_flip: false
+  return_meta: false
+  pin_memory: true
+
+model:
+  in_channels: 6
+  width: 0.5
+  depth: 0.33
+  dropout: 0.1
+  activate_output: true
+
+loss:
+  lambda_coord: 5.0
+  lambda_noobj: 0.5
+  lambda_class: 1.0
+  lambda_motion: 1.0
+
+train:
+  epochs: 10
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  device: cuda
+  mixed_precision: true
+  grad_clip_norm: 10.0
+  log_interval: 10
+  output_dir: outputs/yolov8_2dt
+  save_every_epoch: true
