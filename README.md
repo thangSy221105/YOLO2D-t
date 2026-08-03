@@ -74,6 +74,12 @@ Resume a specific YOLOv1-style checkpoint and train until epoch 20:
 python resume_yolo2dt.py --config configs/default.yaml --resume outputs/default/epoch_005.pt --epochs 20
 ```
 
+The YOLOv1-style resume script also prints validation loss details, saves `best.pt`, reduces LR on plateau, and early-stops by default:
+
+```bash
+python resume_yolo2dt.py --config configs/default.yaml --resume latest --patience 5 --lr-patience 3
+```
+
 For Colab, use `notebooks/colab_train_yolo2dt.ipynb`.
 
 For the YOLOv8-style 2D+t prototype, use:
