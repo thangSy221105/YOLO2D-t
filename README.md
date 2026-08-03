@@ -71,6 +71,18 @@ python train_yolov8_2dt.py --config configs/yolov8_2dt.yaml
 python visualize_yolov8_2dt.py --config configs/yolov8_2dt.yaml
 ```
 
+Resume the latest YOLOv8-style checkpoint:
+
+```bash
+python resume_yolov8_2dt.py --config configs/yolov8_2dt.yaml --resume latest
+```
+
+Resume a specific checkpoint and train until epoch 20:
+
+```bash
+python resume_yolov8_2dt.py --config configs/yolov8_2dt.yaml --resume outputs/yolov8_2dt/epoch_005.pt --epochs 20
+```
+
 Colab notebook:
 
 ```text
