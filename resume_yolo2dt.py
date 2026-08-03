@@ -39,6 +39,11 @@ def parse_args():
     parser.add_argument("--lr-factor", type=float, default=0.1, help="LR multiplier when validation plateaus.")
     parser.add_argument("--min-delta", type=float, default=1.0e-3, help="Minimum val-loss improvement.")
     parser.add_argument("--min-lr", type=float, default=1.0e-7, help="Do not reduce LR below this value.")
+    parser.add_argument("--lr", type=float, default=None, help="Override optimizer LR after loading checkpoint.")
+    parser.add_argument("--lambda-noobj", type=float, default=None, help="Override loss.lambda_noobj for resume.")
+    parser.add_argument("--use-focal-conf", action="store_true", help="Use focal BCE for obj/noobj confidence.")
+    parser.add_argument("--focal-alpha", type=float, default=0.25)
+    parser.add_argument("--focal-gamma", type=float, default=2.0)
     return parser.parse_args()
 
 
@@ -127,13 +132,17 @@ def main() -> None:
         dropout=config["model"]["dropout"],
     ).to(device)
 
+    lambda_noobj = float(args.lambda_noobj if args.lambda_noobj is not None else config["loss"]["lambda_noobj"])
     criterion = Yolo2DTLoss(
         boxes_per_cell=config["data"]["boxes_per_cell"],
         num_classes=config["data"]["num_classes"],
         lambda_coord=config["loss"]["lambda_coord"],
-        lambda_noobj=config["loss"]["lambda_noobj"],
+        lambda_noobj=lambda_noobj,
         lambda_class=config["loss"]["lambda_class"],
         lambda_motion=config["loss"]["lambda_motion"],
+        use_focal_conf=args.use_focal_conf,
+        focal_alpha=args.focal_alpha,
+        focal_gamma=args.focal_gamma,
     )
 
     optimizer = torch.optim.AdamW(
@@ -145,6 +154,9 @@ def main() -> None:
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    if args.lr is not None:
+        for group in optimizer.param_groups:
+            group["lr"] = args.lr
 
     completed_epoch = int(checkpoint["epoch"])
     start_epoch = completed_epoch + 1
@@ -166,6 +178,11 @@ def main() -> None:
     print(f"early stop patience: {args.patience}")
     print(f"lr plateau patience: {args.lr_patience}")
     print(f"current lr: {current_lr(optimizer):.3e}")
+    print(f"lambda_noobj: {lambda_noobj:.4f}")
+    print(f"focal confidence: {args.use_focal_conf}")
+    if args.use_focal_conf:
+        print(f"focal alpha: {args.focal_alpha:.4f}")
+        print(f"focal gamma: {args.focal_gamma:.4f}")
     print(f"train batches: {len(train_loader)}")
     print(f"val batches: {len(val_loader)}")
     print(f"trainable params: {count_parameters(model.parameters()):,}")

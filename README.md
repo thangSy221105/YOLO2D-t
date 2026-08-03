@@ -80,6 +80,12 @@ The YOLOv1-style resume script also prints validation loss details, saves `best.
 python resume_yolo2dt.py --config configs/default.yaml --resume latest --patience 5 --lr-patience 3
 ```
 
+Resume with lower LR and focal confidence/no-object loss:
+
+```bash
+python resume_yolo2dt.py --config configs/default.yaml --resume outputs/default/epoch_003.pt --epochs 50 --lr 3e-5 --lambda-noobj 0.25 --use-focal-conf
+```
+
 For Colab, use `notebooks/colab_train_yolo2dt.ipynb`.
 
 For the YOLOv8-style 2D+t prototype, use:
