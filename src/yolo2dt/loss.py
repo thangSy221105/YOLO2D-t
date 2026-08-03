@@ -7,7 +7,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from .utils import box_iou_xywh
+from .utils import box_diou_loss_xywh, box_iou_xywh
 
 
 @dataclass
@@ -18,6 +18,7 @@ class LossBreakdown:
     noobj: torch.Tensor
     cls: torch.Tensor
     motion: torch.Tensor
+    iou: torch.Tensor
 
 
 class Yolo2DTLoss(nn.Module):
@@ -29,6 +30,7 @@ class Yolo2DTLoss(nn.Module):
         lambda_noobj: float = 0.5,
         lambda_class: float = 1.0,
         lambda_motion: float = 1.0,
+        lambda_iou: float = 0.0,
         use_focal_conf: bool = False,
         focal_alpha: float = 0.25,
         focal_gamma: float = 2.0,
@@ -40,6 +42,7 @@ class Yolo2DTLoss(nn.Module):
         self.lambda_noobj = lambda_noobj
         self.lambda_class = lambda_class
         self.lambda_motion = lambda_motion
+        self.lambda_iou = lambda_iou
         self.use_focal_conf = use_focal_conf
         self.focal_alpha = focal_alpha
         self.focal_gamma = focal_gamma
@@ -102,6 +105,7 @@ class Yolo2DTLoss(nn.Module):
         coord_loss = torch.tensor(0.0, device=device)
         obj_loss = torch.tensor(0.0, device=device)
         noobj_loss = torch.tensor(0.0, device=device)
+        iou_loss = torch.tensor(0.0, device=device)
 
         gt_xy = gt_box[..., :2]
         gt_wh = gt_box[..., 2:4].clamp(min=1.0e-6)
@@ -116,6 +120,9 @@ class Yolo2DTLoss(nn.Module):
 
             coord_loss = coord_loss + self.mse(box_resp * pred_xy, box_resp * gt_xy)
             coord_loss = coord_loss + self.mse(box_resp * torch.sqrt(pred_wh), box_resp * torch.sqrt(gt_wh))
+            if self.lambda_iou > 0.0:
+                iou_values = box_diou_loss_xywh(box_pred[..., :4], gt_box).unsqueeze(-1)
+                iou_loss = iou_loss + (box_resp * iou_values).sum()
 
             target_conf = box_resp
             obj_loss = obj_loss + self._confidence_loss(pred_conf, target_conf, box_resp)
@@ -141,6 +148,7 @@ class Yolo2DTLoss(nn.Module):
             + self.lambda_noobj * noobj_loss
             + self.lambda_class * cls_loss
             + self.lambda_motion * motion_loss
+            + self.lambda_iou * iou_loss
         ) / batch_size
 
         return {
@@ -150,4 +158,5 @@ class Yolo2DTLoss(nn.Module):
             "loss_noobj": noobj_loss / batch_size,
             "loss_cls": cls_loss / batch_size,
             "loss_motion": motion_loss / batch_size,
+            "loss_iou": iou_loss / batch_size,
         }

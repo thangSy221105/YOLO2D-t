@@ -74,5 +74,23 @@ def box_iou_xywh(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Tensor:
     return inter / union.clamp(min=1.0e-6)
 
 
+def box_diou_loss_xywh(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Tensor:
+    boxes1_xyxy = xywh_to_xyxy(boxes1)
+    boxes2_xyxy = xywh_to_xyxy(boxes2)
+
+    iou = box_iou_xywh(boxes1, boxes2)
+
+    center_dist = (boxes1[..., 0] - boxes2[..., 0]).pow(2) + (boxes1[..., 1] - boxes2[..., 1]).pow(2)
+
+    enclosing_x1 = torch.minimum(boxes1_xyxy[..., 0], boxes2_xyxy[..., 0])
+    enclosing_y1 = torch.minimum(boxes1_xyxy[..., 1], boxes2_xyxy[..., 1])
+    enclosing_x2 = torch.maximum(boxes1_xyxy[..., 2], boxes2_xyxy[..., 2])
+    enclosing_y2 = torch.maximum(boxes1_xyxy[..., 3], boxes2_xyxy[..., 3])
+    enclosing_diag = (enclosing_x2 - enclosing_x1).pow(2) + (enclosing_y2 - enclosing_y1).pow(2)
+
+    diou = iou - center_dist / enclosing_diag.clamp(min=1.0e-6)
+    return 1.0 - diou
+
+
 def count_parameters(parameters: Iterable[torch.nn.Parameter]) -> int:
     return sum(p.numel() for p in parameters if p.requires_grad)

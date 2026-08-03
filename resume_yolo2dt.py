@@ -41,6 +41,7 @@ def parse_args():
     parser.add_argument("--min-lr", type=float, default=1.0e-7, help="Do not reduce LR below this value.")
     parser.add_argument("--lr", type=float, default=None, help="Override optimizer LR after loading checkpoint.")
     parser.add_argument("--lambda-noobj", type=float, default=None, help="Override loss.lambda_noobj for resume.")
+    parser.add_argument("--lambda-iou", type=float, default=0.0, help="Auxiliary DIoU loss weight.")
     parser.add_argument("--use-focal-conf", action="store_true", help="Use focal BCE for obj/noobj confidence.")
     parser.add_argument("--focal-alpha", type=float, default=0.25)
     parser.add_argument("--focal-gamma", type=float, default=2.0)
@@ -140,6 +141,7 @@ def main() -> None:
         lambda_noobj=lambda_noobj,
         lambda_class=config["loss"]["lambda_class"],
         lambda_motion=config["loss"]["lambda_motion"],
+        lambda_iou=args.lambda_iou,
         use_focal_conf=args.use_focal_conf,
         focal_alpha=args.focal_alpha,
         focal_gamma=args.focal_gamma,
@@ -179,6 +181,7 @@ def main() -> None:
     print(f"lr plateau patience: {args.lr_patience}")
     print(f"current lr: {current_lr(optimizer):.3e}")
     print(f"lambda_noobj: {lambda_noobj:.4f}")
+    print(f"lambda_iou: {args.lambda_iou:.4f}")
     print(f"focal confidence: {args.use_focal_conf}")
     if args.use_focal_conf:
         print(f"focal alpha: {args.focal_alpha:.4f}")
@@ -230,6 +233,7 @@ def main() -> None:
             f" noobj={train_metrics['loss_noobj']:.4f}"
             f" cls={train_metrics['loss_cls']:.4f}"
             f" motion={train_metrics['loss_motion']:.4f}"
+            f" iou={train_metrics['loss_iou']:.4f}"
         )
         print(
             "val detail:"
@@ -238,6 +242,7 @@ def main() -> None:
             f" noobj={val_metrics['loss_noobj']:.4f}"
             f" cls={val_metrics['loss_cls']:.4f}"
             f" motion={val_metrics['loss_motion']:.4f}"
+            f" iou={val_metrics['loss_iou']:.4f}"
         )
 
         val_loss = float(val_metrics["loss"])
