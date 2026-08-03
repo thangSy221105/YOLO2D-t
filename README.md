@@ -86,6 +86,12 @@ Resume with lower LR and focal confidence/no-object loss:
 python resume_yolo2dt.py --config configs/default.yaml --resume outputs/default/epoch_003.pt --epochs 50 --lr 3e-5 --lambda-noobj 0.25 --use-focal-conf
 ```
 
+Fine-tune a YOLOv1-style checkpoint with motion-focused loss weights:
+
+```bash
+python finetune_motion_yolo2dt.py --config configs/default.yaml --checkpoint outputs/default/best.pt --epochs 10 --lr 1e-5
+```
+
 For Colab, use `notebooks/colab_train_yolo2dt.ipynb`.
 
 For the YOLOv8-style 2D+t prototype, use:
