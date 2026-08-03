@@ -62,6 +62,18 @@ If that module exists, `train.py` will use it automatically.
 python train.py --config configs/default.yaml
 ```
 
+Resume the latest YOLOv1-style 2D+t checkpoint:
+
+```bash
+python resume_yolo2dt.py --config configs/default.yaml --resume latest
+```
+
+Resume a specific YOLOv1-style checkpoint and train until epoch 20:
+
+```bash
+python resume_yolo2dt.py --config configs/default.yaml --resume outputs/default/epoch_005.pt --epochs 20
+```
+
 For Colab, use `notebooks/colab_train_yolo2dt.ipynb`.
 
 For the YOLOv8-style 2D+t prototype, use:
