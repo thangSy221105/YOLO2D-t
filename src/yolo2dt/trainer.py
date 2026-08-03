@@ -25,7 +25,14 @@ def run_epoch(
 ) -> Dict[str, float]:
     model.train(mode=train)
 
-    totals = {}
+    totals = {
+        "loss": 0.0,
+        "loss_coord": 0.0,
+        "loss_obj": 0.0,
+        "loss_noobj": 0.0,
+        "loss_cls": 0.0,
+        "loss_motion": 0.0,
+    }
 
     iterator = tqdm(loader, desc="train" if train else "val", leave=False)
     for step, batch in enumerate(iterator, start=1):
@@ -55,9 +62,7 @@ def run_epoch(
                     torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
                 optimizer.step()
 
-        for key in loss_dict:
-            if key not in totals:
-                totals[key] = 0.0
+        for key in totals:
             totals[key] += float(loss_dict[key].detach().item())
 
         if step % max(log_interval, 1) == 0:

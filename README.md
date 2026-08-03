@@ -86,12 +86,6 @@ Resume with lower LR and focal confidence/no-object loss:
 python resume_yolo2dt.py --config configs/default.yaml --resume outputs/default/epoch_003.pt --epochs 50 --lr 3e-5 --lambda-noobj 0.25 --use-focal-conf
 ```
 
-Resume with auxiliary DIoU loss for bbox plateau:
-
-```bash
-python resume_yolo2dt.py --config configs/default.yaml --resume outputs/default/best.pt --epochs 50 --lr 1e-5 --lambda-noobj 0.25 --use-focal-conf --lambda-iou 1.0
-```
-
 For Colab, use `notebooks/colab_train_yolo2dt.ipynb`.
 
 For the YOLOv8-style 2D+t prototype, use:
