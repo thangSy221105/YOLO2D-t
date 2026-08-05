@@ -19,6 +19,9 @@ model:
   hidden_dim: 128
 
 loss:
+  lambda_coord: 5.0
+  lambda_noobj: 0.5
+  lambda_class: 1.0
   lambda_motion: 5.0
 
 train:
@@ -29,5 +32,5 @@ train:
   mixed_precision: true
   grad_clip_norm: 10.0
   log_interval: 10
-  output_dir: outputs/yolov8_motion
+  output_dir: outputs/yolov8_joint
   save_every_epoch: true

@@ -107,11 +107,11 @@ Best motion checkpoint is saved as:
 outputs/motion_finetune/best_motion.pt
 ```
 
-## YOLOv8 Motion Fine-Tune
+## YOLOv8 Joint Detect + Motion
 
-The repo also includes a practical YOLOv8 motion branch that starts from a
-detect-only checkpoint and trains only a lightweight motion head on the
-existing `2D+t` grid targets.
+The repo also includes a practical YOLOv8 branch that starts from a
+detect-only checkpoint, upgrades the stem to 2-frame input, and predicts both
+detection and motion on the existing `2D+t` grid targets.
 
 Install dependencies:
 
@@ -119,7 +119,7 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-Run motion fine-tuning from a YOLOv8 detect-only checkpoint:
+Run joint detect + motion fine-tuning from a YOLOv8 detect-only checkpoint:
 
 ```bash
 python train_yolov8_motion.py \
@@ -139,7 +139,7 @@ python train_yolov8_motion.py \
 ```
 
 By default the YOLOv8 detector is frozen and only the upgraded 6-channel stem
-plus the motion head are trained. If you want to let the detector adapt too:
+plus the new joint heads are trained. If you want to let the detector adapt too:
 
 ```bash
 python train_yolov8_motion.py \
