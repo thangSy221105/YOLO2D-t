@@ -107,11 +107,12 @@ Best motion checkpoint is saved as:
 outputs/motion_finetune/best_motion.pt
 ```
 
-## YOLOv8 Joint Detect + Motion
+## YOLOv8 Auxiliary Motion Head
 
-The repo also includes a practical YOLOv8 branch that starts from a
-detect-only checkpoint, upgrades the stem to 2-frame input, and predicts both
-detection and motion on the existing `2D+t` grid targets.
+The repo also includes a practical YOLOv8 branch that preserves the original
+YOLOv8 detection head and trains only an auxiliary motion head from two-frame
+input. Detection metrics are taken from the source YOLOv8 checkpoint, while
+motion is learned from the existing `2D+t` grid targets.
 
 Install dependencies:
 
@@ -119,12 +120,13 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-Run joint detect + motion fine-tuning from a YOLOv8 detect-only checkpoint:
+Run auxiliary motion fine-tuning from a YOLOv8 checkpoint:
 
 ```bash
 python train_yolov8_motion.py \
   --config configs/yolov8_motion.yaml \
-  --checkpoint /content/YOLO2D-t/outputs/yolov8_detect_only/weights/best.pt
+  --checkpoint yolov8n.pt \
+  --detect-data /content/YOLO2D-t/yolov8_data.yaml
 ```
 
 Useful overrides:
@@ -132,32 +134,34 @@ Useful overrides:
 ```bash
 python train_yolov8_motion.py \
   --config configs/yolov8_motion.yaml \
-  --checkpoint /content/YOLO2D-t/outputs/yolov8_detect_only/weights/best.pt \
+  --checkpoint yolov8n.pt \
+  --detect-data /content/YOLO2D-t/yolov8_data.yaml \
   --epochs 15 \
   --lr 5e-5 \
   --lambda-motion 5.0
 ```
 
-The script prints validation benchmarks after each epoch by default:
+The script prints source detector metrics and motion loss/metrics during training:
 
 ```text
-Precision, Recall, F1, AP@0.5, mean IoU
+source detector Precision, Recall, mAP@0.5, mAP@0.5:0.95
+train/val motion loss
 motion L1, center L2, future IoU
 ```
 
-Benchmark frequency and thresholds can be changed:
+Detector benchmark frequency can be changed:
 
 ```bash
 python train_yolov8_motion.py \
   --config configs/yolov8_motion.yaml \
   --checkpoint yolov8n.pt \
-  --benchmark-every 1 \
-  --benchmark-conf 0.25 \
-  --benchmark-iou 0.5
+  --detect-data /content/YOLO2D-t/yolov8_data.yaml \
+  --benchmark-every 1
 ```
 
 By default the YOLOv8 detector is frozen and only the upgraded 6-channel stem
-plus the new joint heads are trained. If you want to let the detector adapt too:
+plus the auxiliary motion head are trained. If you want to let the feature
+extractor adapt too:
 
 ```bash
 python train_yolov8_motion.py \

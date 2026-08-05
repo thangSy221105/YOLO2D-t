@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Dict
 
 import torch
 import torch.nn.functional as F
@@ -14,17 +15,11 @@ class MotionFeatureSpec:
 
 
 class YoloV8MotionAdapter(nn.Module):
-    """Joint detection + motion head on top of a YOLOv8 detect checkpoint.
+    """Frozen YOLOv8 detector features plus an auxiliary motion head.
 
-    The pretrained YOLOv8 detector is reused as a 6-channel feature extractor.
-    We capture the multi-scale tensors that feed the detect head, pool them to
-    a fixed 7x7 grid, then predict:
-
-    - detection grid output: B * 5 + C
-    - motion output: 4
-
-    The final tensor layout matches the existing YOLOv1-style target:
-    ``S x S x (B * 5 + C + 4)``.
+    Detection remains handled by the original YOLOv8 checkpoint. This module
+    only learns a 7x7x4 motion map from two-frame input, so training motion
+    cannot overwrite the detector head weights used for detection metrics.
     """
 
     def __init__(
@@ -32,8 +27,6 @@ class YoloV8MotionAdapter(nn.Module):
         checkpoint_path: str | Path,
         image_size: int = 448,
         grid_size: int = 7,
-        boxes_per_cell: int = 2,
-        num_classes: int = 1,
         hidden_dim: int = 128,
         freeze_detector: bool = True,
         train_first_conv: bool = True,
@@ -50,13 +43,8 @@ class YoloV8MotionAdapter(nn.Module):
         self.checkpoint_path = str(checkpoint_path)
         self.image_size = image_size
         self.grid_size = grid_size
-        self.boxes_per_cell = boxes_per_cell
-        self.num_classes = num_classes
         self.hidden_dim = hidden_dim
         self.freeze_detector = freeze_detector
-        self.motion_dims = 4
-        self.detect_dims = boxes_per_cell * 5 + num_classes
-        self.output_dim = self.detect_dims + self.motion_dims
         self._detect_inputs: list[torch.Tensor] | None = None
 
         yolo = YOLO(self.checkpoint_path)
@@ -83,13 +71,12 @@ class YoloV8MotionAdapter(nn.Module):
                 for channels in feature_spec.channels
             ]
         )
-        self.fusion = nn.Sequential(
+        self.motion_head = nn.Sequential(
             nn.Conv2d(hidden_dim * len(feature_spec.channels), hidden_dim, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(hidden_dim),
             nn.SiLU(inplace=True),
+            nn.Conv2d(hidden_dim, 4, kernel_size=1),
         )
-        self.detect_head = nn.Conv2d(hidden_dim, self.detect_dims, kernel_size=1)
-        self.motion_head = nn.Conv2d(hidden_dim, self.motion_dims, kernel_size=1)
 
     def train(self, mode: bool = True):
         super().train(mode)
@@ -110,7 +97,7 @@ class YoloV8MotionAdapter(nn.Module):
             self._detect_inputs = None
 
     def _iter_named_modules_with_parent(self):
-        for parent_name, parent in self.detector.named_modules():
+        for _, parent in self.detector.named_modules():
             for child_name, child in parent.named_children():
                 yield parent, child_name, child
 
@@ -168,9 +155,47 @@ class YoloV8MotionAdapter(nn.Module):
             pooled.append(F.adaptive_avg_pool2d(projected, (self.grid_size, self.grid_size)))
 
         fused = torch.cat(pooled, dim=1)
-        fused = self.fusion(fused)
-
-        detect = self.detect_head(fused)
         motion = self.motion_head(fused)
-        output = torch.cat([detect, motion], dim=1)
-        return output.permute(0, 2, 3, 1).contiguous()
+        return motion.permute(0, 2, 3, 1).contiguous()
+
+
+class YoloV8MotionLoss(nn.Module):
+    def __init__(
+        self,
+        boxes_per_cell: int = 2,
+        num_classes: int = 1,
+        lambda_motion: float = 1.0,
+        loss_type: str = "smooth_l1",
+    ) -> None:
+        super().__init__()
+        self.boxes_per_cell = boxes_per_cell
+        self.num_classes = num_classes
+        self.lambda_motion = lambda_motion
+        self.loss_type = loss_type
+
+    def forward(
+        self,
+        pred_motion: torch.Tensor,
+        target: torch.Tensor,
+        motion_mask: torch.Tensor,
+    ) -> Dict[str, torch.Tensor]:
+        batch_size = pred_motion.shape[0]
+        target_motion = target[..., self.boxes_per_cell * 5 + self.num_classes :]
+        obj_mask = target[..., 4] > 0
+        valid = (obj_mask & (motion_mask > 0)).unsqueeze(-1).to(pred_motion.dtype)
+
+        if self.loss_type == "l1":
+            raw_motion = F.l1_loss(valid * pred_motion, valid * target_motion, reduction="sum")
+        else:
+            raw_motion = F.smooth_l1_loss(valid * pred_motion, valid * target_motion, reduction="sum")
+
+        total_loss = (self.lambda_motion * raw_motion) / batch_size
+        zero = pred_motion.new_tensor(0.0)
+        return {
+            "loss": total_loss,
+            "loss_coord": zero,
+            "loss_obj": zero,
+            "loss_noobj": zero,
+            "loss_cls": zero,
+            "loss_motion": raw_motion / batch_size,
+        }
