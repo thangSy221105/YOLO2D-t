@@ -1,127 +1,20 @@
 # YOLO2D-t
 
-Minimal training scaffold for a YOLOv1-style `2D+t` prototype.
+Minimal YOLOv1-style `2D+t` training scaffold.
 
-This repo is designed for the case where the dataset already returns:
+The repo keeps the original YOLOv1 training idea as the baseline:
 
-- `image`: `Tensor[B, 6, H, W]`
-- `target`: `Tensor[B, S, S, B*5 + C + 4]`
-- `motion_mask`: `Tensor[B, S, S]`
+- MSE loss for bbox coordinates
+- MSE loss for object confidence
+- MSE loss for no-object confidence
+- MSE loss for class prediction
+- one responsible box per occupied grid cell
 
-The default setup assumes:
+The only research extension kept in this version is motion prediction.
 
-- 2 RGB frames concatenated along channels: `6` input channels
-- YOLOv1 grid: `S = 7`
-- boxes per cell: `B = 2`
-- classes: `C = 1`
-- extra motion head: `mx, my, mw, mh`
+## Input And Target
 
-## Repo structure
-
-```text
-.
-├── configs/
-│   └── default.yaml
-├── src/
-│   └── yolo2dt/
-│       ├── __init__.py
-│       ├── config.py
-│       ├── data_adapter.py
-│       ├── loss.py
-│       ├── model.py
-│       ├── trainer.py
-│       └── utils.py
-├── train.py
-└── requirements.txt
-```
-
-## Colab setup
-
-```bash
-git clone https://github.com/thangSy221105/YOLO2D-t.git
-cd YOLO2D-t
-pip install -r requirements.txt
-```
-
-If your dataset code already exists in another file, the quickest path is:
-
-1. Copy your dataset script into this repo.
-2. Edit `src/yolo2dt/data_adapter.py`.
-3. Replace the placeholder dataset builder with your real dataset/dataloader.
-
-The scaffold already supports a direct import path for your earlier dataset file:
-
-- expected module: `scripts.mot17_2dt_dataset`
-- expected function: `create_dataloader(...)`
-
-If that module exists, `train.py` will use it automatically.
-
-## Training
-
-```bash
-python train.py --config configs/default.yaml
-```
-
-Resume the latest YOLOv1-style 2D+t checkpoint:
-
-```bash
-python resume_yolo2dt.py --config configs/default.yaml --resume latest
-```
-
-Resume a specific YOLOv1-style checkpoint and train until epoch 20:
-
-```bash
-python resume_yolo2dt.py --config configs/default.yaml --resume outputs/default/epoch_005.pt --epochs 20
-```
-
-The YOLOv1-style resume script also prints validation loss details, saves `best.pt`, reduces LR on plateau, and early-stops by default:
-
-```bash
-python resume_yolo2dt.py --config configs/default.yaml --resume latest --patience 5 --lr-patience 3
-```
-
-Resume with lower LR and focal confidence/no-object loss:
-
-```bash
-python resume_yolo2dt.py --config configs/default.yaml --resume outputs/default/epoch_003.pt --epochs 50 --lr 3e-5 --lambda-noobj 0.25 --use-focal-conf
-```
-
-Fine-tune a YOLOv1-style checkpoint with motion-focused loss weights:
-
-```bash
-python finetune_motion_yolo2dt.py --config configs/default.yaml --checkpoint outputs/default/best.pt --epochs 10 --lr 1e-5
-```
-
-For Colab, use `notebooks/colab_train_yolo2dt.ipynb`.
-
-For the YOLOv8-style 2D+t prototype, use:
-
-```bash
-python train_yolov8_2dt.py --config configs/yolov8_2dt.yaml
-python visualize_yolov8_2dt.py --config configs/yolov8_2dt.yaml
-```
-
-Resume the latest YOLOv8-style checkpoint:
-
-```bash
-python resume_yolov8_2dt.py --config configs/yolov8_2dt.yaml --resume latest
-```
-
-Resume a specific checkpoint and train until epoch 20:
-
-```bash
-python resume_yolov8_2dt.py --config configs/yolov8_2dt.yaml --resume outputs/yolov8_2dt/epoch_005.pt --epochs 20
-```
-
-Colab notebook:
-
-```text
-notebooks/colab_train_yolov8_2dt.ipynb
-```
-
-## Expected batch format
-
-Each batch can be either:
+Expected dataloader output:
 
 ```python
 {
@@ -131,24 +24,133 @@ Each batch can be either:
 }
 ```
 
-or:
+The default setting assumes:
 
-```python
-(image, target, motion_mask)
+- input: 2 RGB frames concatenated along channel dimension
+- grid size: `S = 7`
+- boxes per cell: `B = 2`
+- classes: `C = 1`
+- motion output: `mx, my, mw, mh`
+
+For each cell, the output layout is:
+
+```text
+box_1: x, y, w, h, confidence
+box_2: x, y, w, h, confidence
+class: person
+motion: mx, my, mw, mh
+```
+
+So the final target shape is:
+
+```text
+7 x 7 x (2 * 5 + 1 + 4) = 7 x 7 x 15
+```
+
+## Setup
+
+```bash
+git clone https://github.com/thangSy221105/YOLO2D-t.git
+cd YOLO2D-t
+pip install -r requirements.txt
+```
+
+For Colab, use:
+
+```text
+notebooks/colab_train_yolo2dt.ipynb
+```
+
+## Train
+
+```bash
+python train.py --config configs/default.yaml
+```
+
+Resume latest checkpoint:
+
+```bash
+python resume_yolo2dt.py --config configs/default.yaml --resume latest
+```
+
+Resume a specific checkpoint and train until epoch 50:
+
+```bash
+python resume_yolo2dt.py --config configs/default.yaml --resume outputs/default/epoch_003.pt --epochs 50
+```
+
+## Motion Fine-Tune
+
+After training the baseline, use motion fine-tuning when the detection branch is usable but motion prediction is still weak:
+
+```bash
+python finetune_motion_yolo2dt.py --config configs/default.yaml --checkpoint outputs/default/epoch_003.pt --epochs 10 --lr 1e-5
+```
+
+The fine-tune script keeps the same YOLOv1-style loss components, but changes the weights to focus more on motion:
+
+```bash
+python finetune_motion_yolo2dt.py \
+  --config configs/default.yaml \
+  --checkpoint outputs/default/epoch_003.pt \
+  --epochs 10 \
+  --lr 1e-5 \
+  --lambda-coord 1.0 \
+  --lambda-noobj 0.1 \
+  --lambda-class 0.2 \
+  --lambda-motion 5.0
+```
+
+Best motion checkpoint is saved as:
+
+```text
+outputs/motion_finetune/best_motion.pt
+```
+
+## YOLOv8 Motion Fine-Tune
+
+The repo also includes a practical YOLOv8 motion branch that starts from a
+detect-only checkpoint and trains only a lightweight motion head on the
+existing `2D+t` grid targets.
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Run motion fine-tuning from a YOLOv8 detect-only checkpoint:
+
+```bash
+python train_yolov8_motion.py \
+  --config configs/yolov8_motion.yaml \
+  --checkpoint /content/YOLO2D-t/outputs/yolov8_detect_only/weights/best.pt
+```
+
+Useful overrides:
+
+```bash
+python train_yolov8_motion.py \
+  --config configs/yolov8_motion.yaml \
+  --checkpoint /content/YOLO2D-t/outputs/yolov8_detect_only/weights/best.pt \
+  --epochs 15 \
+  --lr 5e-5 \
+  --lambda-motion 5.0
+```
+
+By default the YOLOv8 detector is frozen and only the upgraded 6-channel stem
+plus the motion head are trained. If you want to let the detector adapt too:
+
+```bash
+python train_yolov8_motion.py \
+  --config configs/yolov8_motion.yaml \
+  --checkpoint /content/YOLO2D-t/outputs/yolov8_detect_only/weights/best.pt \
+  --unfreeze-detector
 ```
 
 ## Notes
 
-- This is a baseline scaffold, not a reproduction of the original YOLOv1 paper.
-- The loss assumes one GT object per occupied cell, consistent with standard YOLOv1 grid assignment.
-- For cells with objects, the loss picks the responsible predicted box using IoU against the GT box.
-- Motion loss is only applied where `motion_mask == 1`.
-
-## Next steps
-
-Once this trains and produces predictions, the next improvements are usually:
-
-1. Replace the tiny backbone with a stronger one.
-2. Improve the decode and evaluation pipeline.
-3. Add validation metrics for detection and motion separately.
-4. Add checkpoint resume and mixed precision tuning.
+- This is not a full reproduction of the original YOLOv1 paper.
+- The baseline intentionally avoids extra detector variants and non-YOLOv1 loss tricks.
+- Motion loss is applied only where `motion_mask == 1`.
+- The goal is to isolate one question: can a YOLOv1-style detector learn a short-term motion signal from multi-frame input?

@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Dict
 
 import torch
-import torch.nn.functional as F
 from torch import nn
 
 from .utils import box_iou_xywh
@@ -29,9 +28,6 @@ class Yolo2DTLoss(nn.Module):
         lambda_noobj: float = 0.5,
         lambda_class: float = 1.0,
         lambda_motion: float = 1.0,
-        use_focal_conf: bool = False,
-        focal_alpha: float = 0.25,
-        focal_gamma: float = 2.0,
     ) -> None:
         super().__init__()
         self.boxes_per_cell = boxes_per_cell
@@ -40,26 +36,7 @@ class Yolo2DTLoss(nn.Module):
         self.lambda_noobj = lambda_noobj
         self.lambda_class = lambda_class
         self.lambda_motion = lambda_motion
-        self.use_focal_conf = use_focal_conf
-        self.focal_alpha = focal_alpha
-        self.focal_gamma = focal_gamma
         self.mse = nn.MSELoss(reduction="sum")
-
-    def _confidence_loss(
-        self,
-        logits: torch.Tensor,
-        target: torch.Tensor,
-        mask: torch.Tensor,
-    ) -> torch.Tensor:
-        if not self.use_focal_conf:
-            return self.mse(mask * logits, mask * target)
-
-        bce = F.binary_cross_entropy_with_logits(logits, target, reduction="none")
-        prob = torch.sigmoid(logits)
-        pt = target * prob + (1.0 - target) * (1.0 - prob)
-        alpha = target * self.focal_alpha + (1.0 - target) * (1.0 - self.focal_alpha)
-        focal_weight = alpha * (1.0 - pt).pow(self.focal_gamma)
-        return (mask * focal_weight * bce).sum()
 
     def forward(
         self,
@@ -117,17 +94,12 @@ class Yolo2DTLoss(nn.Module):
             coord_loss = coord_loss + self.mse(box_resp * pred_xy, box_resp * gt_xy)
             coord_loss = coord_loss + self.mse(box_resp * torch.sqrt(pred_wh), box_resp * torch.sqrt(gt_wh))
 
-            target_conf = box_resp
-            obj_loss = obj_loss + self._confidence_loss(pred_conf, target_conf, box_resp)
+            obj_loss = obj_loss + self.mse(box_resp * pred_conf, box_resp)
 
             noobj_box_mask = noobj_mask.unsqueeze(-1).to(pred.dtype) + (
                 obj_mask.unsqueeze(-1).to(pred.dtype) * (1.0 - box_resp)
             )
-            noobj_loss = noobj_loss + self._confidence_loss(
-                pred_conf,
-                torch.zeros_like(pred_conf),
-                noobj_box_mask,
-            )
+            noobj_loss = noobj_loss + self.mse(noobj_box_mask * pred_conf, torch.zeros_like(pred_conf))
 
         cls_mask = obj_mask.unsqueeze(-1).to(pred.dtype)
         cls_loss = self.mse(cls_mask * pred_cls, cls_mask * target_cls)

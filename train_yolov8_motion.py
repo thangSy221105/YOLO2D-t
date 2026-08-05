@@ -13,24 +13,27 @@ if str(SRC_DIR) not in sys.path:
 
 from yolo2dt.config import load_config
 from yolo2dt.data_adapter import build_dataloaders
-from yolo2dt.loss import Yolo2DTLoss
-from yolo2dt.model import Yolo2DTiny
 from yolo2dt.trainer import run_epoch, save_checkpoint, save_history
 from yolo2dt.utils import count_parameters, ensure_dir, set_seed
+from yolo2dt.yolov8_motion import YoloV8MotionAdapter, YoloV8MotionLoss
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="configs/default.yaml")
-    parser.add_argument("--checkpoint", type=str, required=True, help="Source checkpoint to fine-tune from.")
-    parser.add_argument("--epochs", type=int, default=10, help="Number of fine-tune epochs to run.")
-    parser.add_argument("--output-dir", type=str, default="outputs/motion_finetune")
-    parser.add_argument("--lr", type=float, default=1.0e-5)
-    parser.add_argument("--lambda-coord", type=float, default=1.0)
-    parser.add_argument("--lambda-noobj", type=float, default=0.1)
-    parser.add_argument("--lambda-class", type=float, default=0.2)
-    parser.add_argument("--lambda-motion", type=float, default=5.0)
-    parser.add_argument("--patience", type=int, default=5, help="Early stop using validation motion loss.")
+    parser.add_argument("--config", type=str, default="configs/yolov8_motion.yaml")
+    parser.add_argument("--checkpoint", type=str, required=True, help="YOLOv8 detect-only checkpoint (.pt).")
+    parser.add_argument("--epochs", type=int, default=None, help="Override train.epochs from config.")
+    parser.add_argument("--output-dir", type=str, default=None, help="Override train.output_dir from config.")
+    parser.add_argument("--lr", type=float, default=None, help="Override train.lr from config.")
+    parser.add_argument("--lambda-motion", type=float, default=None, help="Override loss.lambda_motion from config.")
+    parser.add_argument("--loss-type", type=str, default="smooth_l1", choices=["smooth_l1", "l1"])
+    parser.add_argument("--unfreeze-detector", action="store_true", help="Train the whole YOLOv8 detector as well.")
+    parser.add_argument(
+        "--freeze-first-conv",
+        action="store_true",
+        help="Keep the upgraded 6-channel first conv frozen. Default behavior is trainable.",
+    )
+    parser.add_argument("--patience", type=int, default=5, help="Early stop based on validation motion loss.")
     parser.add_argument("--min-delta", type=float, default=1.0e-4)
     return parser.parse_args()
 
@@ -46,6 +49,7 @@ def save_best_checkpoint(
     optimizer: torch.optim.Optimizer,
     history: dict[str, list],
     best_val_motion: float,
+    source_checkpoint: str,
 ) -> Path:
     output_dir = ensure_dir(output_dir)
     checkpoint_path = output_dir / "best_motion.pt"
@@ -56,6 +60,7 @@ def save_best_checkpoint(
             "optimizer_state_dict": optimizer.state_dict(),
             "history": history,
             "best_val_motion": best_val_motion,
+            "source_checkpoint": source_checkpoint,
         },
         checkpoint_path,
     )
@@ -67,10 +72,11 @@ def main() -> None:
     config = load_config(args.config)
     set_seed(config["seed"])
 
-    output_dir = ensure_dir(args.output_dir)
     checkpoint_path = Path(args.checkpoint)
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+    output_dir = ensure_dir(args.output_dir or config["train"]["output_dir"])
 
     requested_device = config["train"].get("device", "cuda")
     if requested_device == "cuda" and not torch.cuda.is_available():
@@ -80,38 +86,30 @@ def main() -> None:
 
     train_loader, val_loader = build_dataloaders(config)
 
-    model = Yolo2DTiny(
-        in_channels=config["model"]["in_channels"],
+    model = YoloV8MotionAdapter(
+        checkpoint_path=checkpoint_path,
+        image_size=config["data"]["image_size"],
         grid_size=config["data"]["grid_size"],
-        boxes_per_cell=config["data"]["boxes_per_cell"],
-        num_classes=config["data"]["num_classes"],
         hidden_dim=config["model"]["hidden_dim"],
-        dropout=config["model"]["dropout"],
+        freeze_detector=not args.unfreeze_detector,
+        train_first_conv=not args.freeze_first_conv,
     ).to(device)
 
-    criterion = Yolo2DTLoss(
+    criterion = YoloV8MotionLoss(
         boxes_per_cell=config["data"]["boxes_per_cell"],
         num_classes=config["data"]["num_classes"],
-        lambda_coord=args.lambda_coord,
-        lambda_noobj=args.lambda_noobj,
-        lambda_class=args.lambda_class,
-        lambda_motion=args.lambda_motion,
+        lambda_motion=float(args.lambda_motion if args.lambda_motion is not None else config["loss"]["lambda_motion"]),
+        loss_type=args.loss_type,
     )
 
+    trainable_parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
     optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=args.lr,
+        trainable_parameters,
+        lr=float(args.lr if args.lr is not None else config["train"]["lr"]),
         weight_decay=config["train"]["weight_decay"],
     )
 
-    checkpoint = torch.load(checkpoint_path, map_location=device)
-    model.load_state_dict(checkpoint["model_state_dict"])
-    if "optimizer_state_dict" in checkpoint:
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-        for group in optimizer.param_groups:
-            group["lr"] = args.lr
-
-    source_epoch = int(checkpoint.get("epoch", 0))
+    total_epochs = int(args.epochs if args.epochs is not None else config["train"]["epochs"])
     history = {"train": [], "val": []}
     best_val_motion = float("inf")
     bad_epochs = 0
@@ -119,27 +117,22 @@ def main() -> None:
     mixed_precision = bool(config["train"].get("mixed_precision", True))
     scaler = torch.cuda.amp.GradScaler(enabled=(mixed_precision and device.type == "cuda"))
 
-    print("model: Yolo2DTiny motion fine-tune")
+    print("model: YoloV8MotionAdapter")
     print(f"device: {device}")
     print(f"source checkpoint: {checkpoint_path}")
-    print(f"source epoch: {source_epoch}")
-    print(f"fine-tune epochs: {args.epochs}")
+    print(f"fine-tune epochs: {total_epochs}")
     print(f"output dir: {output_dir}")
     print(f"current lr: {current_lr(optimizer):.3e}")
-    print(
-        "loss weights:"
-        f" coord={args.lambda_coord}"
-        f" noobj={args.lambda_noobj}"
-        f" class={args.lambda_class}"
-        f" motion={args.lambda_motion}"
-    )
+    print(f"freeze detector: {not args.unfreeze_detector}")
+    print(f"train first conv: {not args.freeze_first_conv}")
+    print(f"loss type: {args.loss_type}")
+    print(f"lambda motion: {criterion.lambda_motion:.4f}")
     print(f"train batches: {len(train_loader)}")
     print(f"val batches: {len(val_loader)}")
     print(f"trainable params: {count_parameters(model.parameters()):,}")
 
-    for finetune_epoch in range(1, args.epochs + 1):
-        logical_epoch = source_epoch + finetune_epoch
-        print(f"\nFine-tune epoch {finetune_epoch}/{args.epochs} | logical epoch {logical_epoch}")
+    for epoch in range(1, total_epochs + 1):
+        print(f"\nEpoch {epoch}/{total_epochs}")
 
         train_metrics = run_epoch(
             model=model,
@@ -170,35 +163,29 @@ def main() -> None:
         history["val"].append(val_metrics)
 
         print(f"train loss: {train_metrics['loss']:.4f} | val loss: {val_metrics['loss']:.4f}")
-        print(
-            "train detail:"
-            f" coord={train_metrics['loss_coord']:.4f}"
-            f" obj={train_metrics['loss_obj']:.4f}"
-            f" noobj={train_metrics['loss_noobj']:.4f}"
-            f" cls={train_metrics['loss_cls']:.4f}"
-            f" motion={train_metrics['loss_motion']:.4f}"
-        )
-        print(
-            "val detail:"
-            f" coord={val_metrics['loss_coord']:.4f}"
-            f" obj={val_metrics['loss_obj']:.4f}"
-            f" noobj={val_metrics['loss_noobj']:.4f}"
-            f" cls={val_metrics['loss_cls']:.4f}"
-            f" motion={val_metrics['loss_motion']:.4f}"
-        )
+        print(f"train motion: {train_metrics['loss_motion']:.4f}")
+        print(f"val motion: {val_metrics['loss_motion']:.4f}")
 
         val_motion = float(val_metrics["loss_motion"])
         if val_motion < best_val_motion - args.min_delta:
             best_val_motion = val_motion
             bad_epochs = 0
-            best_path = save_best_checkpoint(output_dir, logical_epoch, model, optimizer, history, best_val_motion)
+            best_path = save_best_checkpoint(
+                output_dir=output_dir,
+                epoch=epoch,
+                model=model,
+                optimizer=optimizer,
+                history=history,
+                best_val_motion=best_val_motion,
+                source_checkpoint=str(checkpoint_path),
+            )
             print(f"new best val motion: {best_val_motion:.4f} | saved: {best_path}")
         else:
             bad_epochs += 1
             print(f"no val motion improvement: bad_epochs={bad_epochs}/{args.patience}")
 
         save_history(output_dir, history)
-        saved_path = save_checkpoint(output_dir, logical_epoch, model, optimizer, history)
+        saved_path = save_checkpoint(output_dir, epoch, model, optimizer, history)
         print(f"saved: {saved_path}")
 
         if bad_epochs >= args.patience:
