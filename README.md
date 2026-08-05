@@ -138,6 +138,24 @@ python train_yolov8_motion.py \
   --lambda-motion 5.0
 ```
 
+The script prints validation benchmarks after each epoch by default:
+
+```text
+Precision, Recall, F1, AP@0.5, mean IoU
+motion L1, center L2, future IoU
+```
+
+Benchmark frequency and thresholds can be changed:
+
+```bash
+python train_yolov8_motion.py \
+  --config configs/yolov8_motion.yaml \
+  --checkpoint yolov8n.pt \
+  --benchmark-every 1 \
+  --benchmark-conf 0.25 \
+  --benchmark-iou 0.5
+```
+
 By default the YOLOv8 detector is frozen and only the upgraded 6-channel stem
 plus the new joint heads are trained. If you want to let the detector adapt too:
 
