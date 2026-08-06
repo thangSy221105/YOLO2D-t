@@ -20,8 +20,16 @@ loss:
 
 train:
   epochs: 20
-  lr: 1.0e-4
-  weight_decay: 1.0e-4
+  optimizer: sgd
+  lr: 1.0e-2
+  momentum: 0.9
+  weight_decay: 5.0e-4
+  warmup_start_factor: 0.1
+  warmup_frac: 0.037
+  decay1_frac: 0.556
+  decay2_frac: 0.778
+  gamma1: 0.1
+  gamma2: 0.01
   device: cuda
   mixed_precision: true
   log_interval: 100

@@ -214,6 +214,60 @@ def parse_args():
     return parser.parse_args()
 
 
+def build_optimizer(model, config: dict):
+    train_cfg = config["train"]
+    optimizer_name = train_cfg.get("optimizer", "sgd").lower()
+    lr = train_cfg["lr"]
+    weight_decay = train_cfg["weight_decay"]
+
+    if optimizer_name == "sgd":
+        return torch.optim.SGD(
+            model.parameters(),
+            lr=lr,
+            momentum=train_cfg.get("momentum", 0.9),
+            weight_decay=weight_decay,
+        )
+    if optimizer_name == "adamw":
+        return torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+
+    raise ValueError(f"Unsupported optimizer: {optimizer_name}")
+
+
+def build_scheduler(optimizer, config: dict):
+    train_cfg = config["train"]
+    total_epochs = int(train_cfg["epochs"])
+    warmup_epochs = max(1, int(round(total_epochs * train_cfg.get("warmup_frac", 5 / 135))))
+    decay1_epoch = max(warmup_epochs + 1, int(round(total_epochs * train_cfg.get("decay1_frac", 75 / 135))))
+    decay2_epoch = max(decay1_epoch + 1, int(round(total_epochs * train_cfg.get("decay2_frac", 105 / 135))))
+    warmup_start_factor = float(train_cfg.get("warmup_start_factor", 0.1))
+    gamma1 = float(train_cfg.get("gamma1", 0.1))
+    gamma2 = float(train_cfg.get("gamma2", 0.01))
+
+    def lr_lambda(epoch_idx: int):
+        epoch = epoch_idx + 1
+        if epoch <= warmup_epochs:
+            if warmup_epochs == 1:
+                return 1.0
+            alpha = (epoch - 1) / (warmup_epochs - 1)
+            return warmup_start_factor + (1.0 - warmup_start_factor) * alpha
+        if epoch < decay1_epoch:
+            return 1.0
+        if epoch < decay2_epoch:
+            return gamma1
+        return gamma2
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+    scheduler_meta = {
+        "warmup_epochs": warmup_epochs,
+        "decay1_epoch": decay1_epoch,
+        "decay2_epoch": decay2_epoch,
+        "warmup_start_factor": warmup_start_factor,
+        "gamma1": gamma1,
+        "gamma2": gamma2,
+    }
+    return scheduler, scheduler_meta
+
+
 def run_epoch(model, loader, criterion, optimizer, device, scaler, train, mixed_precision, log_interval):
     model.train(mode=train)
 
@@ -301,13 +355,14 @@ def build_loaders(config: dict):
     return train_loader, val_loader
 
 
-def save_checkpoint(output_dir: Path, epoch: int, model, optimizer, history, best_val: float):
+def save_checkpoint(output_dir: Path, epoch: int, model, optimizer, scheduler, history, best_val: float):
     checkpoint_path = output_dir / f"epoch_{epoch:03d}.pt"
     torch.save(
         {
             "epoch": epoch,
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
             "history": history,
             "best_val_loss": best_val,
         },
@@ -344,11 +399,8 @@ def main():
         lambda_noobj=config["loss"]["lambda_noobj"],
     )
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=config["train"]["lr"],
-        weight_decay=config["train"]["weight_decay"],
-    )
+    optimizer = build_optimizer(model, config)
+    scheduler, scheduler_meta = build_scheduler(optimizer, config)
 
     start_epoch = 1
     history = {"train": [], "val": []}
@@ -358,6 +410,8 @@ def main():
         checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
         model.load_state_dict(checkpoint["model_state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        if "scheduler_state_dict" in checkpoint:
+            scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         history = checkpoint.get("history", history)
         best_val = checkpoint.get("best_val_loss", best_val)
         start_epoch = int(checkpoint["epoch"]) + 1
@@ -370,9 +424,17 @@ def main():
     print(f"train batches: {len(train_loader)}")
     print(f"val batches: {len(val_loader)}")
     print(f"trainable params: {count_parameters(model.parameters()):,}")
+    print(
+        "lr schedule:"
+        f" warmup={scheduler_meta['warmup_epochs']}"
+        f" decay1={scheduler_meta['decay1_epoch']}"
+        f" decay2={scheduler_meta['decay2_epoch']}"
+        f" base_lr={config['train']['lr']}"
+    )
 
     for epoch in range(start_epoch, config["train"]["epochs"] + 1):
         print(f"\nEpoch {epoch}/{config['train']['epochs']}")
+        print(f"current lr: {optimizer.param_groups[0]['lr']:.6g}")
 
         train_metrics = run_epoch(
             model=model,
@@ -430,7 +492,7 @@ def main():
             f" AP50={person_metrics['ap50']:.4f}"
         )
 
-        save_path = save_checkpoint(output_dir, epoch, model, optimizer, history, best_val)
+        save_path = save_checkpoint(output_dir, epoch, model, optimizer, scheduler, history, best_val)
         if val_metrics["loss"] < best_val:
             best_val = val_metrics["loss"]
             best_path = output_dir / "best.pt"
@@ -439,6 +501,7 @@ def main():
                     "epoch": epoch,
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": scheduler.state_dict(),
                     "history": history,
                     "best_val_loss": best_val,
                 },
@@ -450,6 +513,7 @@ def main():
             json.dump(history, f, indent=2)
 
         print(f"saved: {save_path}")
+        scheduler.step()
 
 
 if __name__ == "__main__":
