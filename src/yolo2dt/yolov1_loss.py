@@ -75,7 +75,7 @@ class YoloV1Loss(nn.Module):
         gt_area = (gt_xyxy[..., 2:3] - gt_xyxy[..., 0:1]).clamp(min=0.0) * (
             gt_xyxy[..., 3:4] - gt_xyxy[..., 1:2]
         ).clamp(min=0.0)
-        union = pred_area + gt_area.squeeze(-1) - inter
+        union = pred_area + gt_area - inter
         iou = inter / union.clamp(min=1.0e-6)
 
         best_box = iou.argmax(dim=-1)
