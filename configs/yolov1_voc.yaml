@@ -26,3 +26,8 @@ train:
   mixed_precision: true
   log_interval: 100
   output_dir: /content/YOLO2D-t/outputs/yolov1_voc
+
+eval:
+  conf_threshold: 0.05
+  nms_iou: 0.5
+  eval_iou: 0.5
