@@ -20,7 +20,7 @@ from yolo2dt.utils import count_parameters, ensure_dir, set_seed
 from yolo2dt.voc_yolov1_dataset import VOC_CLASSES, VocCsvDetectionDataset
 from yolo2dt.yolov1_loss import YoloV1Loss
 from yolo2dt.yolov1_model import YoloV1Original
-from yolo2dt.yolov1_ver2_model import YoloV1Ver2
+from yolo2dt.yolov1_resnet50_model import YoloV1ResNet50
 
 
 def cxcywh_to_xyxy(box):
@@ -247,8 +247,11 @@ def build_model(config: dict, device: torch.device):
 
     if model_name == "yolov1_original":
         model = YoloV1Original(**kwargs)
-    elif model_name == "yolov1_ver2":
-        model = YoloV1Ver2(**kwargs)
+    elif model_name == "yolov1_resnet50":
+        model = YoloV1ResNet50(
+            **kwargs,
+            pretrained_backbone=bool(model_cfg.get("pretrained_backbone", True)),
+        )
     else:
         raise ValueError(f"Unsupported model name: {model_name}")
 

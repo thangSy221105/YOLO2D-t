@@ -1,7 +1,8 @@
 seed: 42
 
 model:
-  name: yolov1_ver2
+  name: yolov1_resnet50
+  pretrained_backbone: true
   pretrained_checkpoint: ""
   strict_load: true
 
@@ -16,8 +17,8 @@ data:
   batch_size: 8
   num_workers: 2
   pin_memory: false
-  normalize_mean: [0.4549, 0.4341, 0.4010]
-  normalize_std: [0.2703, 0.2672, 0.2808]
+  normalize_mean: null
+  normalize_std: null
 
 loss:
   lambda_coord: 5.0
@@ -25,20 +26,20 @@ loss:
 
 train:
   epochs: 20
-  optimizer: sgd
-  lr: 1.0e-2
+  optimizer: adamw
+  lr: 1.0e-4
   momentum: 0.9
-  weight_decay: 5.0e-4
+  weight_decay: 1.0e-4
   warmup_start_factor: 0.1
-  warmup_frac: 0.037
-  decay1_frac: 0.556
-  decay2_frac: 0.778
+  warmup_frac: 0.05
+  decay1_frac: 0.70
+  decay2_frac: 0.90
   gamma1: 0.1
   gamma2: 0.01
   device: cuda
   mixed_precision: true
   log_interval: 100
-  output_dir: /content/YOLO2D-t/outputs/yolov1_voc_ver2
+  output_dir: /content/YOLO2D-t/outputs/yolov1_voc_resnet50
 
 eval:
   conf_threshold: 0.05
