@@ -25,14 +25,7 @@ def run_epoch(
 ) -> Dict[str, float]:
     model.train(mode=train)
 
-    totals = {
-        "loss": 0.0,
-        "loss_coord": 0.0,
-        "loss_obj": 0.0,
-        "loss_noobj": 0.0,
-        "loss_cls": 0.0,
-        "loss_motion": 0.0,
-    }
+    totals: Dict[str, float] | None = None
 
     iterator = tqdm(loader, desc="train" if train else "val", leave=False)
     for step, batch in enumerate(iterator, start=1):
@@ -47,6 +40,9 @@ def run_epoch(
             preds = model(images)
             loss_dict = criterion(preds, targets, motion_mask)
             loss = loss_dict["loss"]
+
+        if totals is None:
+            totals = {key: 0.0 for key in loss_dict.keys()}
 
         if train:
             if scaler is not None and autocast_enabled:
@@ -66,9 +62,16 @@ def run_epoch(
             totals[key] += float(loss_dict[key].detach().item())
 
         if step % max(log_interval, 1) == 0:
-            iterator.set_postfix(loss=f"{totals['loss'] / step:.4f}")
+            postfix = {"loss": f"{totals['loss'] / step:.4f}"}
+            if "loss_direction" in totals:
+                postfix["dir"] = f"{totals['loss_direction'] / step:.4f}"
+            if "mean_cosine" in totals:
+                postfix["cos"] = f"{totals['mean_cosine'] / step:.4f}"
+            iterator.set_postfix(**postfix)
 
     num_steps = max(len(loader), 1)
+    if totals is None:
+        return {"loss": 0.0}
     return {key: value / num_steps for key, value in totals.items()}
 
 

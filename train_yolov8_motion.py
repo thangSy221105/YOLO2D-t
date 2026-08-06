@@ -298,6 +298,21 @@ def main() -> None:
         print(f"train loss: {train_metrics['loss']:.4f} | val loss: {val_metrics['loss']:.4f}")
         print(f"train motion: {train_metrics['loss_motion']:.4f}")
         print(f"val motion: {val_metrics['loss_motion']:.4f}")
+        if "loss_direction" in train_metrics or "loss_direction" in val_metrics:
+            print(
+                f"train direction: {float(train_metrics.get('loss_direction', 0.0)):.4f}"
+                f" | val direction: {float(val_metrics.get('loss_direction', 0.0)):.4f}"
+            )
+        if "mean_cosine" in train_metrics or "mean_cosine" in val_metrics:
+            print(
+                f"train mean cosine: {float(train_metrics.get('mean_cosine', 0.0)):.4f}"
+                f" | val mean cosine: {float(val_metrics.get('mean_cosine', 0.0)):.4f}"
+            )
+        if "moving_cells" in train_metrics or "moving_cells" in val_metrics:
+            print(
+                f"train moving cells: {float(train_metrics.get('moving_cells', 0.0)):.1f}"
+                f" | val moving cells: {float(val_metrics.get('moving_cells', 0.0)):.1f}"
+            )
 
         if args.benchmark_every > 0 and epoch % args.benchmark_every == 0:
             motion_metrics = benchmark_motion_val(
