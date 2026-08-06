@@ -1,0 +1,28 @@
+seed: 42
+
+data:
+  root_dir: /content/voc_repo/VOC_Detection
+  train_split: train
+  val_split: test
+  image_size: 448
+  grid_size: 7
+  boxes_per_cell: 2
+  num_classes: 20
+  batch_size: 8
+  num_workers: 2
+  pin_memory: false
+  normalize_mean: [0.4549, 0.4341, 0.4010]
+  normalize_std: [0.2703, 0.2672, 0.2808]
+
+loss:
+  lambda_coord: 5.0
+  lambda_noobj: 0.5
+
+train:
+  epochs: 20
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  device: cuda
+  mixed_precision: true
+  log_interval: 100
+  output_dir: /content/YOLO2D-t/outputs/yolov1_voc
