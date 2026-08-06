@@ -166,12 +166,18 @@ class YoloV8MotionLoss(nn.Module):
         num_classes: int = 1,
         lambda_motion: float = 1.0,
         loss_type: str = "smooth_l1",
+        lambda_direction: float = 1.0,
+        moving_threshold: float = 1.0e-2,
+        eps: float = 1.0e-6,
     ) -> None:
         super().__init__()
         self.boxes_per_cell = boxes_per_cell
         self.num_classes = num_classes
         self.lambda_motion = lambda_motion
         self.loss_type = loss_type
+        self.lambda_direction = lambda_direction
+        self.moving_threshold = moving_threshold
+        self.eps = eps
 
     def forward(
         self,
@@ -182,14 +188,35 @@ class YoloV8MotionLoss(nn.Module):
         batch_size = pred_motion.shape[0]
         target_motion = target[..., self.boxes_per_cell * 5 + self.num_classes :]
         obj_mask = target[..., 4] > 0
-        valid = (obj_mask & (motion_mask > 0)).unsqueeze(-1).to(pred_motion.dtype)
+        valid_mask = obj_mask & (motion_mask > 0)
+        valid = valid_mask.unsqueeze(-1).to(pred_motion.dtype)
 
         if self.loss_type == "l1":
             raw_motion = F.l1_loss(valid * pred_motion, valid * target_motion, reduction="sum")
         else:
             raw_motion = F.smooth_l1_loss(valid * pred_motion, valid * target_motion, reduction="sum")
 
-        total_loss = (self.lambda_motion * raw_motion) / batch_size
+        # Separate direction supervision helps when magnitude is learned but heading is unstable.
+        target_xy = target_motion[..., :2]
+        pred_xy = pred_motion[..., :2]
+        target_speed = torch.sqrt((target_xy**2).sum(dim=-1) + self.eps)
+        moving_mask = valid_mask & (target_speed > self.moving_threshold)
+
+        if moving_mask.any():
+            pred_xy_m = pred_xy[moving_mask]
+            target_xy_m = target_xy[moving_mask]
+
+            pred_xy_unit = pred_xy_m / (torch.norm(pred_xy_m, dim=-1, keepdim=True) + self.eps)
+            target_xy_unit = target_xy_m / (torch.norm(target_xy_m, dim=-1, keepdim=True) + self.eps)
+
+            cosine = (pred_xy_unit * target_xy_unit).sum(dim=-1)
+            raw_direction = (1.0 - cosine).sum()
+            mean_cosine = cosine.mean()
+        else:
+            raw_direction = pred_motion.new_tensor(0.0)
+            mean_cosine = pred_motion.new_tensor(0.0)
+
+        total_loss = (self.lambda_motion * raw_motion + self.lambda_direction * raw_direction) / batch_size
         zero = pred_motion.new_tensor(0.0)
         return {
             "loss": total_loss,
@@ -198,4 +225,7 @@ class YoloV8MotionLoss(nn.Module):
             "loss_noobj": zero,
             "loss_cls": zero,
             "loss_motion": raw_motion / batch_size,
+            "loss_direction": raw_direction / batch_size,
+            "mean_cosine": mean_cosine,
+            "moving_cells": moving_mask.sum().to(pred_motion.dtype),
         }
