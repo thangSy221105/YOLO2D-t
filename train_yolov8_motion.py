@@ -132,6 +132,7 @@ def benchmark_motion_val(
     motion_offset = boxes_per_cell * 5 + num_classes
 
     valid_count = 0
+    has_future_head = False
     l1_sum = torch.zeros(4, dtype=torch.float64)
     center_l2_sum = 0.0
     future_iou_sum = 0.0
@@ -145,6 +146,7 @@ def benchmark_motion_val(
         if isinstance(predictions, dict):
             preds_motion = predictions["motion"]
             preds_future_raw = predictions.get("future")
+            has_future_head = preds_future_raw is not None
         else:
             preds_motion = predictions
             preds_future_raw = None
@@ -213,7 +215,7 @@ def benchmark_motion_val(
         "motion_center_l2": center_l2_sum / max(valid_count, 1),
         "motion_future_iou": future_iou_sum / max(valid_count, 1),
     }
-    if future_head_iou_sum > 0.0 or future_head_center_l2_sum > 0.0:
+    if has_future_head:
         metrics["future_head_center_l2"] = future_head_center_l2_sum / max(valid_count, 1)
         metrics["future_head_iou"] = future_head_iou_sum / max(valid_count, 1)
     return metrics
