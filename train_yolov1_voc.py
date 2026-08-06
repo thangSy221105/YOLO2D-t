@@ -20,6 +20,7 @@ from yolo2dt.utils import count_parameters, ensure_dir, set_seed
 from yolo2dt.voc_yolov1_dataset import VOC_CLASSES, VocCsvDetectionDataset
 from yolo2dt.yolov1_loss import YoloV1Loss
 from yolo2dt.yolov1_model import YoloV1Original
+from yolo2dt.yolov1_ver2_model import YoloV1Ver2
 
 
 def cxcywh_to_xyxy(box):
@@ -233,6 +234,46 @@ def build_optimizer(model, config: dict):
     raise ValueError(f"Unsupported optimizer: {optimizer_name}")
 
 
+def build_model(config: dict, device: torch.device):
+    data_cfg = config["data"]
+    model_cfg = config.get("model", {})
+    model_name = model_cfg.get("name", "yolov1_original").lower()
+
+    kwargs = {
+        "grid_size": data_cfg["grid_size"],
+        "boxes_per_cell": data_cfg["boxes_per_cell"],
+        "num_classes": data_cfg["num_classes"],
+    }
+
+    if model_name == "yolov1_original":
+        model = YoloV1Original(**kwargs)
+    elif model_name == "yolov1_ver2":
+        model = YoloV1Ver2(**kwargs)
+    else:
+        raise ValueError(f"Unsupported model name: {model_name}")
+
+    model = model.to(device)
+
+    pretrained_path = model_cfg.get("pretrained_checkpoint", "")
+    if pretrained_path:
+        checkpoint = torch.load(pretrained_path, map_location=device, weights_only=False)
+        if "model_state_dict" in checkpoint:
+            state = checkpoint["model_state_dict"]
+        elif "model_state" in checkpoint:
+            state = checkpoint["model_state"]
+        else:
+            state = checkpoint
+
+        strict = bool(model_cfg.get("strict_load", True))
+        missing, unexpected = model.load_state_dict(state, strict=strict)
+        print(f"loaded pretrained from: {pretrained_path}")
+        if not strict:
+            print(f"pretrained missing keys: {len(missing)}")
+            print(f"pretrained unexpected keys: {len(unexpected)}")
+
+    return model
+
+
 def build_scheduler(optimizer, config: dict):
     train_cfg = config["train"]
     total_epochs = int(train_cfg["epochs"])
@@ -385,11 +426,7 @@ def main():
 
     train_loader, val_loader = build_loaders(config)
 
-    model = YoloV1Original(
-        grid_size=config["data"]["grid_size"],
-        boxes_per_cell=config["data"]["boxes_per_cell"],
-        num_classes=config["data"]["num_classes"],
-    ).to(device)
+    model = build_model(config, device)
 
     criterion = YoloV1Loss(
         grid_size=config["data"]["grid_size"],

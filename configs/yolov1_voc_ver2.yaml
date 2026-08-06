@@ -1,7 +1,7 @@
 seed: 42
 
 model:
-  name: yolov1_original
+  name: yolov1_ver2
   pretrained_checkpoint: ""
   strict_load: true
 
@@ -38,7 +38,7 @@ train:
   device: cuda
   mixed_precision: true
   log_interval: 100
-  output_dir: /content/YOLO2D-t/outputs/yolov1_voc
+  output_dir: /content/YOLO2D-t/outputs/yolov1_voc_ver2
 
 eval:
   conf_threshold: 0.05
