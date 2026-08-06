@@ -63,6 +63,8 @@ def run_epoch(
 
         if step % max(log_interval, 1) == 0:
             postfix = {"loss": f"{totals['loss'] / step:.4f}"}
+            if "loss_future" in totals:
+                postfix["future"] = f"{totals['loss_future'] / step:.4f}"
             if "loss_direction" in totals:
                 postfix["dir"] = f"{totals['loss_direction'] / step:.4f}"
             if "mean_cosine" in totals:

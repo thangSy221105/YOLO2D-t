@@ -20,6 +20,10 @@ model:
 
 loss:
   lambda_motion: 5.0
+  lambda_direction: 1.0
+  lambda_future: 1.0
+  future_loss_type: smooth_l1
+  moving_threshold: 1.0e-2
 
 train:
   epochs: 10

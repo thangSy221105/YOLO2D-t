@@ -15,11 +15,12 @@ class MotionFeatureSpec:
 
 
 class YoloV8MotionAdapter(nn.Module):
-    """Frozen YOLOv8 detector features plus an auxiliary motion head.
+    """Frozen YOLOv8 detector features plus auxiliary motion/future heads.
 
     Detection remains handled by the original YOLOv8 checkpoint. This module
-    only learns a 7x7x4 motion map from two-frame input, so training motion
-    cannot overwrite the detector head weights used for detection metrics.
+    learns a 7x7x4 motion map and a 7x7x4 future-box map from two-frame input,
+    so motion training can use future supervision without overwriting the
+    detector head weights used for detection metrics.
     """
 
     def __init__(
@@ -72,6 +73,12 @@ class YoloV8MotionAdapter(nn.Module):
             ]
         )
         self.motion_head = nn.Sequential(
+            nn.Conv2d(hidden_dim * len(feature_spec.channels), hidden_dim, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(hidden_dim),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(hidden_dim, 4, kernel_size=1),
+        )
+        self.future_head = nn.Sequential(
             nn.Conv2d(hidden_dim * len(feature_spec.channels), hidden_dim, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(hidden_dim),
             nn.SiLU(inplace=True),
@@ -143,7 +150,7 @@ class YoloV8MotionAdapter(nn.Module):
         self._detect_inputs = None
         return MotionFeatureSpec(channels=channels)
 
-    def forward(self, image: torch.Tensor) -> torch.Tensor:
+    def forward(self, image: torch.Tensor) -> Dict[str, torch.Tensor]:
         self._detect_inputs = None
         _ = self.detector(image)
         if self._detect_inputs is None or not self._detect_inputs:
@@ -156,7 +163,11 @@ class YoloV8MotionAdapter(nn.Module):
 
         fused = torch.cat(pooled, dim=1)
         motion = self.motion_head(fused)
-        return motion.permute(0, 2, 3, 1).contiguous()
+        future = self.future_head(fused)
+        return {
+            "motion": motion.permute(0, 2, 3, 1).contiguous(),
+            "future": future.permute(0, 2, 3, 1).contiguous(),
+        }
 
 
 class YoloV8MotionLoss(nn.Module):
@@ -167,6 +178,8 @@ class YoloV8MotionLoss(nn.Module):
         lambda_motion: float = 1.0,
         loss_type: str = "smooth_l1",
         lambda_direction: float = 1.0,
+        lambda_future: float = 1.0,
+        future_loss_type: str = "smooth_l1",
         moving_threshold: float = 1.0e-2,
         eps: float = 1.0e-6,
     ) -> None:
@@ -176,15 +189,24 @@ class YoloV8MotionLoss(nn.Module):
         self.lambda_motion = lambda_motion
         self.loss_type = loss_type
         self.lambda_direction = lambda_direction
+        self.lambda_future = lambda_future
+        self.future_loss_type = future_loss_type
         self.moving_threshold = moving_threshold
         self.eps = eps
 
     def forward(
         self,
-        pred_motion: torch.Tensor,
+        predictions: torch.Tensor | Dict[str, torch.Tensor],
         target: torch.Tensor,
         motion_mask: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
+        if isinstance(predictions, dict):
+            pred_motion = predictions["motion"]
+            pred_future_raw = predictions.get("future")
+        else:
+            pred_motion = predictions
+            pred_future_raw = None
+
         batch_size = pred_motion.shape[0]
         target_motion = target[..., self.boxes_per_cell * 5 + self.num_classes :]
         obj_mask = target[..., 4] > 0
@@ -216,7 +238,39 @@ class YoloV8MotionLoss(nn.Module):
             raw_direction = pred_motion.new_tensor(0.0)
             mean_cosine = pred_motion.new_tensor(0.0)
 
-        total_loss = (self.lambda_motion * raw_motion + self.lambda_direction * raw_direction) / batch_size
+        if pred_future_raw is not None:
+            grid_size = pred_motion.shape[1]
+            row_index = torch.arange(grid_size, device=target.device, dtype=target.dtype).view(1, grid_size, 1)
+            col_index = torch.arange(grid_size, device=target.device, dtype=target.dtype).view(1, 1, grid_size)
+
+            current_x = (target[..., 0] + col_index) / grid_size
+            current_y = (target[..., 1] + row_index) / grid_size
+            current_w = target[..., 2]
+            current_h = target[..., 3]
+
+            target_future = torch.stack(
+                [
+                    current_x + target_motion[..., 0],
+                    current_y + target_motion[..., 1],
+                    torch.clamp(current_w + target_motion[..., 2], min=self.eps),
+                    torch.clamp(current_h + target_motion[..., 3], min=self.eps),
+                ],
+                dim=-1,
+            )
+            pred_future = torch.sigmoid(pred_future_raw)
+
+            if self.future_loss_type == "l1":
+                raw_future = F.l1_loss(valid * pred_future, valid * target_future, reduction="sum")
+            else:
+                raw_future = F.smooth_l1_loss(valid * pred_future, valid * target_future, reduction="sum")
+        else:
+            raw_future = pred_motion.new_tensor(0.0)
+
+        total_loss = (
+            self.lambda_motion * raw_motion
+            + self.lambda_direction * raw_direction
+            + self.lambda_future * raw_future
+        ) / batch_size
         zero = pred_motion.new_tensor(0.0)
         return {
             "loss": total_loss,
@@ -226,6 +280,7 @@ class YoloV8MotionLoss(nn.Module):
             "loss_cls": zero,
             "loss_motion": raw_motion / batch_size,
             "loss_direction": raw_direction / batch_size,
+            "loss_future": raw_future / batch_size,
             "mean_cosine": mean_cosine,
             "moving_cells": moving_mask.sum().to(pred_motion.dtype),
         }
